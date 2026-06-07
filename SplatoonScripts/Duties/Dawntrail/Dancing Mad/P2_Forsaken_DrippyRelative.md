@@ -3,7 +3,13 @@
 Import URL for Splatoon:
 
 ```text
-https://github.com/louxsye/Splatoon/raw/refs/heads/main/SplatoonScripts/Duties/Dawntrail/Dancing%20Mad/P2_Forsaken_DrippyRelative.cs
+https://raw.githubusercontent.com/louxsye/Splatoon/main/SplatoonScripts/Duties/Dawntrail/Dancing%20Mad/P2_Forsaken_DrippyRelative.cs
+```
+
+Because this is hosted on the `louxsye` fork instead of the default Splatoon trusted repos, add this prefix to Splatoon's extra trusted sources before installing from a URL:
+
+```text
+https://raw.githubusercontent.com/louxsye/
 ```
 
 Preset target script name:
