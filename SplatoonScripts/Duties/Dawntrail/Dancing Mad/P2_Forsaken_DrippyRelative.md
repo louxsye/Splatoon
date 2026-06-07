@@ -22,7 +22,10 @@ Recommended settings for a Phase 2.md preset block:
 
 ```text
 UseRelativePositionForSameMarker = true
+SameMarkerRankMode = FartherFromBossAdjusts
 InvertRelativeSameMarkerSide = false
 ```
 
-`InvertRelativeSameMarkerSide` is only for reversing the local left/right result if live debug shows the displayed assignment is flipped.
+`SameMarkerRankMode = FartherFromBossAdjusts` assigns Rank 1 to the same-marker player closer to the arena center/boss and Rank 2 to the player farther away.
+
+`InvertRelativeSameMarkerSide` is only for reversing the local left/right result when `SameMarkerRankMode = TowerRelativeLeftRight`.

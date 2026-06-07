@@ -43,7 +43,7 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
     private static readonly Vector3 ArenaCenter = new(100f, 0f, 100f);
     private const float TowerOffsetCardinal = 8f;
     private const float TowerOffsetDiagonal = 5.7f;
-    private const int CurrentDefaultsVersion = 14;
+    private const int CurrentDefaultsVersion = 15;
 
     private static readonly Vector3[] TowerPositions =
     [
@@ -159,9 +159,9 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
     private static readonly InternationalString UseRelativePositionForSameMarkerDescriptionText = new()
     {
         En =
-            "When exactly two resolving players have the same visible Missing debuff, rank them by local left/right from the active tower pair looking toward the arena center. If the tower pair or positions are unavailable, global priority is used.",
+            "When exactly two resolving players have the same visible Missing debuff, rank them by the selected position mode instead of global priority. If the position check is unavailable, global priority is used.",
         Jp =
-            "現在塔を処理する4人の中で同じミッシング表示が2人だけの場合、出現中の2塔の中点から中央を見る向きのローカル左右で順位を決めます。塔位置や座標が取れない場合は全体優先順位に戻します。"
+            "現在塔を処理する4人の中で同じミッシング表示が2人だけの場合、全体優先順位ではなく選択した位置方式で順位を決めます。判定できない場合は全体優先順位に戻します。"
     };
 
     private static readonly InternationalString InvertRelativeSameMarkerSideText = new()
@@ -169,6 +169,26 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         En = "Invert relative left/right",
         Jp = "相対左右を反転"
     };
+
+    private static readonly InternationalString SameMarkerRankModeText = new()
+    {
+        En = "Same-marker rank mode",
+        Jp = "同マーカー順位方式"
+    };
+
+    private static readonly InternationalString SameMarkerRankModeDescriptionText = new()
+    {
+        En =
+            "Boss distance mode assigns Rank 1 to the player closer to the arena center/boss and Rank 2 to the player farther away, so the farther player takes the adjustment slot.",
+        Jp =
+            "ボス距離方式では、中央/ボスに近い人をRank 1、遠い人をRank 2にします。遠い人が調整側になります。"
+    };
+
+    private static readonly InternationalString[] SameMarkerRankModeLabelTexts =
+    [
+        new() { En = "Tower-relative left/right", Jp = "塔基準の左右" },
+        new() { En = "Farther from boss adjusts", Jp = "ボスから遠い方が調整" }
+    ];
 
     private static readonly InternationalString InitialHeadStackRankModeText = new()
     {
@@ -533,6 +553,13 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         ImGui.Spacing();
         ImGui.Checkbox(UseRelativePositionForSameMarkerText.Get(), ref C.UseRelativePositionForSameMarker);
         ImGui.TextWrapped(UseRelativePositionForSameMarkerDescriptionText.Get());
+        var sameMarkerRankMode = (int)C.SameMarkerRankMode;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.Combo(SameMarkerRankModeText.Get(), ref sameMarkerRankMode,
+                BuildSameMarkerRankModeLabels(), SameMarkerRankModeLabelTexts.Length))
+            C.SameMarkerRankMode = (SameMarkerRankMode)Math.Clamp(sameMarkerRankMode, 0,
+                SameMarkerRankModeLabelTexts.Length - 1);
+        ImGui.TextWrapped(SameMarkerRankModeDescriptionText.Get());
         ImGui.Checkbox(InvertRelativeSameMarkerSideText.Get(), ref C.InvertRelativeSameMarkerSide);
         ImGui.Spacing();
         for (var i = 0; i < PairCount; i++)
@@ -1009,6 +1036,7 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         ImGui.TextUnformatted($"Last side: {_lastSide}");
         ImGui.TextUnformatted($"Last debuff/rank: {_lastDebuff} #{_lastDebuffRank}");
         ImGui.TextUnformatted($"Last support rank: {_lastSupportRank}");
+        ImGui.TextUnformatted($"Same-marker rank mode: {C.SameMarkerRankMode}");
         ImGui.TextUnformatted($"Relative same-marker rank: {_lastRelativeSameMarkerDebug}");
         ImGui.TextUnformatted($"Last selector: {(_lastSelectorLabel.Length == 0 ? "none" : _lastSelectorLabel)}");
         ImGui.TextUnformatted($"Last matched rule: {_lastRuleLabel}");
@@ -1446,7 +1474,7 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         int priorityRank)
     {
         var fallbackDetail =
-            $"wave={_currentWave} stage={_currentStage} debuff={debuff} priorityRank={priorityRank}";
+            $"wave={_currentWave} stage={_currentStage} debuff={debuff} mode={C.SameMarkerRankMode} priorityRank={priorityRank}";
 
         if (debuff == LiveDebuffKind.None)
             return (0, false, $"{fallbackDetail}; fallback=no visible debuff");
@@ -1463,13 +1491,24 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         if (priorityRank <= 0)
             return (priorityRank, false, $"{fallbackDetail}; fallback=target not in same debuff players");
 
-        if (!TryGetActiveTowerPositions(out var referenceTower, out var pairedTower, out var referenceMapPosition,
-                out var pairedMapPosition))
-            return (priorityRank, false, $"{fallbackDetail}; fallback=active tower positions unavailable");
-
         var other = sameDebuffPlayers.FirstOrDefault(player => player.EntityId != target.EntityId);
         if (other == null)
             return (priorityRank, false, $"{fallbackDetail}; fallback=partner not found");
+
+        return C.SameMarkerRankMode == SameMarkerRankMode.FartherFromBossAdjusts
+            ? ResolveBossDistanceSameMarkerRank(target, other, priorityRank, fallbackDetail)
+            : ResolveTowerRelativeSameMarkerRank(target, other, priorityRank, fallbackDetail);
+    }
+
+    private (int Rank, bool UsedRelative, string Detail) ResolveTowerRelativeSameMarkerRank(
+        IPlayerCharacter target,
+        IPlayerCharacter other,
+        int priorityRank,
+        string fallbackDetail)
+    {
+        if (!TryGetActiveTowerPositions(out var referenceTower, out var pairedTower, out var referenceMapPosition,
+                out var pairedMapPosition))
+            return (priorityRank, false, $"{fallbackDetail}; fallback=active tower positions unavailable");
 
         if (!TryGetRelativeLocalX(target.Position, referenceTower, pairedTower, out var myLocalX, out var myFailure))
             return (priorityRank, false, $"{fallbackDetail}; fallback=my localX unavailable ({myFailure})");
@@ -1490,6 +1529,28 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         var towerCenter = (referenceTower + pairedTower) * 0.5f;
         return (relativeRank, true,
             $"{fallbackDetail}; relativeRank={relativeRank} target={DebugPlayer(target)} other={DebugPlayer(other)} activeTowers={FormatMapPosition(referenceMapPosition)}/{FormatMapPosition(pairedMapPosition)} towerCenter={FormatVector3(towerCenter)} myLocalX={myLocalX:0.000} otherLocalX={otherLocalX:0.000} inverted={C.InvertRelativeSameMarkerSide}");
+    }
+
+    private (int Rank, bool UsedRelative, string Detail) ResolveBossDistanceSameMarkerRank(
+        IPlayerCharacter target,
+        IPlayerCharacter other,
+        int priorityRank,
+        string fallbackDetail)
+    {
+        if (!TryGetHorizontalDistance(target.Position, ArenaCenter, out var myDistance))
+            return (priorityRank, false, $"{fallbackDetail}; fallback=my boss distance unavailable");
+
+        if (!TryGetHorizontalDistance(other.Position, ArenaCenter, out var otherDistance))
+            return (priorityRank, false, $"{fallbackDetail}; fallback=other boss distance unavailable");
+
+        var difference = MathF.Abs(myDistance - otherDistance);
+        if (difference < 0.01f)
+            return (priorityRank, false,
+                $"{fallbackDetail}; fallback=boss distance tie my={myDistance:0.000} other={otherDistance:0.000}");
+
+        var relativeRank = myDistance < otherDistance ? 1 : 2;
+        return (relativeRank, true,
+            $"{fallbackDetail}; relativeRank={relativeRank} target={DebugPlayer(target)} other={DebugPlayer(other)} bossCenter={FormatVector3(ArenaCenter)} myBossDistance={myDistance:0.000} otherBossDistance={otherDistance:0.000} farAdjustsRank=2");
     }
 
     private static int GetPrioritySameDebuffRank(IReadOnlyList<IPlayerCharacter> sameDebuffPlayers, IPlayerCharacter target)
@@ -2177,6 +2238,14 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         return false;
     }
 
+    private static bool TryGetHorizontalDistance(Vector3 position, Vector3 origin, out float distance)
+    {
+        var dx = position.X - origin.X;
+        var dz = position.Z - origin.Z;
+        distance = MathF.Sqrt(dx * dx + dz * dz);
+        return IsFinite(distance);
+    }
+
     private static bool IsFinite(float value)
     {
         return !float.IsNaN(value) && !float.IsInfinity(value);
@@ -2252,6 +2321,11 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
     private static string[] BuildInitialHeadStackRankModeLabels()
     {
         return InitialHeadStackRankModeLabelTexts.Select(item => item.Get()).ToArray();
+    }
+
+    private static string[] BuildSameMarkerRankModeLabels()
+    {
+        return SameMarkerRankModeLabelTexts.Select(item => item.Get()).ToArray();
     }
 
     private string BasicStageLabel(BasicStageKind stage)
@@ -2612,6 +2686,12 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         PartnerDebuff,
         PriorityOrder,
         RoleSide
+    }
+
+    public enum SameMarkerRankMode
+    {
+        TowerRelativeLeftRight,
+        FartherFromBossAdjusts
     }
 
     public enum BasicStageKind
@@ -3130,6 +3210,7 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
         public bool SplitHeadStackPairs;
         public bool UseRelativePositionForSameMarker = true;
         public bool InvertRelativeSameMarkerSide;
+        public SameMarkerRankMode SameMarkerRankMode = SameMarkerRankMode.FartherFromBossAdjusts;
         public P2_Forsaken_DrippyRelative.InitialHeadStackRankMode InitialHeadStackRankMode =
             P2_Forsaken_DrippyRelative.InitialHeadStackRankMode.PartnerDebuff;
         public int AssignmentMode;
@@ -3228,6 +3309,9 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
             if ((int)InitialHeadStackRankMode < 0 ||
                 (int)InitialHeadStackRankMode >= InitialHeadStackRankModeLabelTexts.Length)
                 InitialHeadStackRankMode = P2_Forsaken_DrippyRelative.InitialHeadStackRankMode.PartnerDebuff;
+            if ((int)SameMarkerRankMode < 0 ||
+                (int)SameMarkerRankMode >= SameMarkerRankModeLabelTexts.Length)
+                SameMarkerRankMode = SameMarkerRankMode.FartherFromBossAdjusts;
             MigrateUiTerminology();
             PastFixedText ??= new InternationalString { En = "Tower gap", Jp = "塔間" };
             FutureFixedText ??= new InternationalString { En = "Opposite side", Jp = "反対側" };
@@ -3334,6 +3418,12 @@ public class P2_Forsaken_DrippyRelative : SplatoonScript<P2_Forsaken_DrippyRelat
             {
                 UseRelativePositionForSameMarker = true;
                 DefaultsVersion = 14;
+            }
+
+            if (DefaultsVersion < 15)
+            {
+                SameMarkerRankMode = SameMarkerRankMode.FartherFromBossAdjusts;
+                DefaultsVersion = 15;
             }
 
             for (var i = 0; i < Waves.Length; i++)
